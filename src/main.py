@@ -1,0 +1,55 @@
+import argparse
+import signal
+import sys
+import time
+from pathlib import Path
+
+from server import MinecraftServer
+
+
+def main():
+    parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser.add_argument(
+        "--ip",
+        help="IP address of the RCON server. If provided, the server will NOT be started locally.",
+    )
+    parser.add_argument("--rcon-port", type=int, default=25575, help="RCON port")
+    parser.add_argument("--rcon-password", default="1234", help="RCON password")
+    parser.add_argument(
+        "--server-jar-path",
+        type=Path,
+        default=Path(__file__).parent.parent / "server" / "server.jar",
+        help="Minecraft server JAR file path",
+    )
+    parser.add_argument(
+        "--java-path",
+        default="/usr/lib/jvm/java-21-openjdk/bin/java",
+        help="Path to Java 21 executable",
+    )
+
+    args = parser.parse_args()
+
+    server = MinecraftServer(
+        ip_address=args.ip,
+        rcon_port=args.rcon_port,
+        rcon_password=args.rcon_password,
+        server_jar_path=args.server_jar_path,
+        java_path=args.java_path,
+    )
+
+    def handle_exit(sig, frame):
+        server.kill_server()
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, handle_exit)
+
+    server.start_server()
+    server.connect_to_server()
+
+    time.sleep(10)
+
+    server.kill_server()
+
+
+if __name__ == "__main__":
+    main()
