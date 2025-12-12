@@ -7,8 +7,10 @@ from pathlib import Path
 import coloredlogs
 from mcrcon import MCRcon
 
+from ea.blocks import Block
+
 logger = logging.getLogger(__name__)
-coloredlogs.install(level="DEBUG", logger=logger)
+coloredlogs.install(level="INFO", logger=logger)
 
 
 class MinecraftServer:
@@ -95,4 +97,51 @@ class MinecraftServer:
         if hasattr(self, "process"):
             self.process.terminate()
             self.process.wait()
-            logger.info("Minecraft server process terminated.")
+            logger.info("Minecraft server stopped.")
+
+
+class MinecraftServerContext:
+
+    def __init__(self, server: MinecraftServer):
+        self.server = server
+
+    def __enter__(self):
+        self.server.start_server()
+        self.server.connect_to_server()
+        self.run_command("forceload add 0 0")
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        if self.server.ip_address is None:
+            self.server.kill_server()
+
+        if exc_type is KeyboardInterrupt:
+            return True
+        return False
+
+    def run_command(self, cmd: str) -> str:
+        response = self.server.rcon.command(cmd)
+        logger.debug(f"Command: {cmd} -> Response: {response}")
+        return response
+
+    def set_block(self, x: int, y: int, z: int, block: Block | str):
+        if isinstance(block, Block):
+            namespaced_id = block.namespaced_id
+        else:
+            namespaced_id = block
+
+        self.run_command(f"setblock {x} {y} {z} {namespaced_id}")
+
+    def fill(self, x1: int, y1: int, z1: int, x2: int, y2: int, z2: int, block: Block | str):
+        if isinstance(block, Block):
+            namespaced_id = block.namespaced_id
+        else:
+            namespaced_id = block
+
+        self.run_command(f"fill {x1} {y1} {z1} {x2} {y2} {z2} {namespaced_id}")
+
+    def clear_area(self, x1: int, y1: int, z1: int, x2: int, y2: int, z2: int):
+        self.fill(x1, y1, z1, x2, y2, z2, "minecraft:air")
+        self.run_command(
+            f"kill @e[type=item, x={x1}, y={y1}, z={z1}, dx={x2-x1}, dy={y2-y1}, dz={z2-z1}]"
+        )

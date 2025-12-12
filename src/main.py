@@ -1,10 +1,8 @@
 import argparse
-import signal
-import sys
-import time
 from pathlib import Path
 
-from server import MinecraftServer
+import ea
+from server import MinecraftServer, MinecraftServerContext
 
 
 def main():
@@ -29,26 +27,16 @@ def main():
 
     args = parser.parse_args()
 
-    server = MinecraftServer(
-        ip_address=args.ip,
-        rcon_port=args.rcon_port,
-        rcon_password=args.rcon_password,
-        server_jar_path=args.server_jar_path,
-        java_path=args.java_path,
-    )
-
-    def handle_exit(sig, frame):
-        server.kill_server()
-        sys.exit(0)
-
-    signal.signal(signal.SIGINT, handle_exit)
-
-    server.start_server()
-    server.connect_to_server()
-
-    time.sleep(10)
-
-    server.kill_server()
+    with MinecraftServerContext(
+        MinecraftServer(
+            ip_address=args.ip,
+            rcon_port=args.rcon_port,
+            rcon_password=args.rcon_password,
+            server_jar_path=args.server_jar_path,
+            java_path=args.java_path,
+        )
+    ) as server_context:
+        ea.run(server_context)
 
 
 if __name__ == "__main__":
