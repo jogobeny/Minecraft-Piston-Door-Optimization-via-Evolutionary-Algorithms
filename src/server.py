@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 
 import coloredlogs
-from mcrcon import MCRcon
+from aiomcrcon import Client
 
 from ea.blocks import Block
 
@@ -80,10 +80,10 @@ class MinecraftServer:
 
         raise RuntimeError("Minecraft server process ended unexpectedly.")
 
-    def connect_to_server(self):
+    async def connect_to_server(self):
         ip = self.ip_address or "127.0.0.1"
-        self.rcon = MCRcon(ip, self.rcon_password, self.rcon_port)
-        self.rcon.connect()
+        self.rcon = Client(ip, self.rcon_port, self.rcon_password)
+        await self.rcon.connect()
         logger.info(f"Successfully connected to RCON at {ip}:{self.rcon_port}")
 
     def kill_server(self):
@@ -105,13 +105,13 @@ class MinecraftServerContext:
     def __init__(self, server: MinecraftServer):
         self.server = server
 
-    def __enter__(self):
+    async def __aenter__(self):
         self.server.start_server()
-        self.server.connect_to_server()
-        self.run_command("forceload add 0 0")
+        await self.server.connect_to_server()
+        await self.run_command("forceload add 0 0")
         return self
 
-    def __exit__(self, exc_type, exc_value, traceback):
+    async def __aexit__(self, exc_type, exc_value, traceback):
         if self.server.ip_address is None:
             self.server.kill_server()
 
@@ -119,29 +119,29 @@ class MinecraftServerContext:
             return True
         return False
 
-    def run_command(self, cmd: str) -> str:
-        response = self.server.rcon.command(cmd)
+    async def run_command(self, cmd: str) -> str:
+        response = await self.server.rcon.send_cmd(cmd)
         logger.debug(f"Command: {cmd} -> Response: {response}")
         return response
 
-    def set_block(self, x: int, y: int, z: int, block: Block | str):
+    async def set_block(self, x: int, y: int, z: int, block: Block | str):
         if isinstance(block, Block):
             namespaced_id = block.namespaced_id
         else:
             namespaced_id = block
 
-        self.run_command(f"setblock {x} {y} {z} {namespaced_id}")
+        await self.run_command(f"setblock {x} {y} {z} {namespaced_id}")
 
-    def fill(self, x1: int, y1: int, z1: int, x2: int, y2: int, z2: int, block: Block | str):
+    async def fill(self, x1: int, y1: int, z1: int, x2: int, y2: int, z2: int, block: Block | str):
         if isinstance(block, Block):
             namespaced_id = block.namespaced_id
         else:
             namespaced_id = block
 
-        self.run_command(f"fill {x1} {y1} {z1} {x2} {y2} {z2} {namespaced_id}")
+        await self.run_command(f"fill {x1} {y1} {z1} {x2} {y2} {z2} {namespaced_id}")
 
-    def clear_area(self, x1: int, y1: int, z1: int, x2: int, y2: int, z2: int):
-        self.fill(x1, y1, z1, x2, y2, z2, "minecraft:air")
-        self.run_command(
+    async def clear_area(self, x1: int, y1: int, z1: int, x2: int, y2: int, z2: int):
+        await self.fill(x1, y1, z1, x2, y2, z2, "minecraft:air")
+        await self.run_command(
             f"kill @e[type=item, x={x1}, y={y1}, z={z1}, dx={x2-x1}, dy={y2-y1}, dz={z2-z1}]"
         )

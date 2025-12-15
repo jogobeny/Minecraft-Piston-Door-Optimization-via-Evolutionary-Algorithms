@@ -1,11 +1,12 @@
 import argparse
+import asyncio
 from pathlib import Path
 
 import ea
 from server import MinecraftServer, MinecraftServerContext
 
 
-def main():
+async def main():
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument(
         "--ip",
@@ -27,7 +28,7 @@ def main():
 
     args = parser.parse_args()
 
-    with MinecraftServerContext(
+    async with MinecraftServerContext(
         MinecraftServer(
             ip_address=args.ip,
             rcon_port=args.rcon_port,
@@ -36,8 +37,8 @@ def main():
             java_path=args.java_path,
         )
     ) as server_context:
-        ea.run(server_context)
+        await ea.run(server_context)
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
