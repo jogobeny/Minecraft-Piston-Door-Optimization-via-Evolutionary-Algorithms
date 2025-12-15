@@ -16,24 +16,47 @@ coloredlogs.install(level="INFO", logger=logger)
 
 coordinates_type = [("x", int), ("y", int), ("z", int)]
 
-BOUNDS = np.array([(4, 3, 5)], dtype=coordinates_type)
+BOUNDS = np.array([(5, 3, 5)], dtype=coordinates_type)
 
 BASE_POSITION = np.array([(0, -60, 0)], dtype=coordinates_type)
 OFFSET = np.array([(4, 0, 4)], dtype=coordinates_type)
 
-DOOR_BASE_POSITION = np.array([(4, 0, 2), (4, 1, 2)], dtype=coordinates_type)
-DOOR_TARGET_POSITIONS = np.array([(5, 0, 2), (5, 1, 2)], dtype=coordinates_type)
+# DOOR_BASE_POSITION = np.array([(4, 0, 2), (4, 1, 2)], dtype=coordinates_type)
+# DOOR_TARGET_POSITIONS = np.array([(5, 0, 2), (5, 1, 2)], dtype=coordinates_type)
+DOOR_TARGET_POSITIONS = np.array(
+    [
+        # Top
+        [(0, 0, -1), (0, 1, -1)],
+        [(1, 0, -1), (1, 1, -1)],
+        [(2, 0, -1), (2, 1, -1)],
+        [(3, 0, -1), (3, 1, -1)],
+        [(4, 0, -1), (4, 1, -1)],
+        # Bottom
+        [(0, 0, BOUNDS["z"].item()), (0, 1, BOUNDS["z"].item())],
+        [(1, 0, BOUNDS["z"].item()), (1, 1, BOUNDS["z"].item())],
+        [(2, 0, BOUNDS["z"].item()), (2, 1, BOUNDS["z"].item())],
+        [(3, 0, BOUNDS["z"].item()), (3, 1, BOUNDS["z"].item())],
+        [(4, 0, BOUNDS["z"].item()), (4, 1, BOUNDS["z"].item())],
+        # Left
+        [(-1, 0, 0), (-1, 1, 0)],
+        [(-1, 0, 1), (-1, 1, 1)],
+        [(-1, 0, 2), (-1, 1, 2)],
+        [(-1, 0, 3), (-1, 1, 3)],
+        [(-1, 0, 4), (-1, 1, 4)],
+        # Right
+        [(BOUNDS["x"].item(), 0, 0), (BOUNDS["x"].item(), 1, 0)],
+        [(BOUNDS["x"].item(), 0, 1), (BOUNDS["x"].item(), 1, 1)],
+        [(BOUNDS["x"].item(), 0, 2), (BOUNDS["x"].item(), 1, 2)],
+        [(BOUNDS["x"].item(), 0, 3), (BOUNDS["x"].item(), 1, 3)],
+        [(BOUNDS["x"].item(), 0, 4), (BOUNDS["x"].item(), 1, 4)],
+    ],
+    dtype=coordinates_type,
+)
 
-TORCH_POSITION = np.array([(4, 0, 4)], dtype=coordinates_type)
+
+TORCH_POSITION = np.array([(5, 0, 4)], dtype=coordinates_type)
 
 POSSIBLE_BLOCKS = [blocks.AIR, blocks.REDSTONE_WIRE] + SOLID_BLOCKS
-
-PISTON_GROUP = {
-    blocks.STICKY_PISTON_N,
-    blocks.STICKY_PISTON_S,
-    blocks.STICKY_PISTON_W,
-    blocks.STICKY_PISTON_E,
-}
 
 
 def get_global_position(x: int, y: int, z: int, offset: np.ndarray):
@@ -141,9 +164,9 @@ class MinecraftBatchEvaluator:
         return np.array([(row * 16, 0, col * 16)], dtype=coordinates_type)
 
     async def build_individual(self, individual, offset):
-        for x, y, z in DOOR_BASE_POSITION:
-            gx, gy, gz = get_global_position(x, y, z, offset)
-            await self.server_context.set_block(gx, gy, gz, blocks.STONE)
+        # for x, y, z in DOOR_BASE_POSITION:
+        #     gx, gy, gz = get_global_position(x, y, z, offset)
+        #     await self.server_context.set_block(gx, gy, gz, blocks.STONE)
 
         for y in range(individual.shape[0]):
             for z in range(individual.shape[1]):
@@ -173,10 +196,12 @@ class MinecraftBatchEvaluator:
             offset = self.chunk_offset(i)
             await self.build_individual(individual, offset)
 
-        scores_open = []
-        for i, individual in enumerate(population):
-            offset = self.chunk_offset(i)
-            scores_open.append(await self.check_door_state(DOOR_BASE_POSITION, offset))
+        await asyncio.sleep(0.25)
+
+        # scores_open = []
+        # for i, individual in enumerate(population):
+        #     offset = self.chunk_offset(i)
+        #     scores_open.append(await self.check_door_state(DOOR_BASE_POSITION, offset))
 
         for i, _ in enumerate(population):
             offset = self.chunk_offset(i)
@@ -184,24 +209,59 @@ class MinecraftBatchEvaluator:
                 *get_global_position(*(TORCH_POSITION.item()), offset), "minecraft:redstone_torch"
             )
 
-        # 1 tick ~ 0.05 seconds
         await asyncio.sleep(0.5)
 
-        scores_closed = []
-        for i, _ in enumerate(population):
-            offset = self.chunk_offset(i)
-            scores_closed.append(await self.check_door_state(DOOR_TARGET_POSITIONS, offset))
+        await asyncio.sleep(10)
 
         fitnesses = []
-        for s1, s2 in zip(scores_closed, scores_open):
-            fitnesses.append((s1 + s2,))
+        for i, _ in enumerate(population):
+            offset = self.chunk_offset(i)
+
+            counts = []
+            for j in range(len(DOOR_TARGET_POSITIONS)):
+                pair = DOOR_TARGET_POSITIONS[j]
+                blocks_in_pair = 0
+                for tx, ty, tz in pair:
+                    gx, gy, gz = get_global_position(tx, ty, tz, offset)
+                    print(gx, gy, gz, "koukám na")
+                    response = await self.server_context.run_command(
+                        f"execute if block {gx} {gy} {gz} minecraft:stone"
+                    )
+                    print(response)
+                    if response == "Test passed":
+                        blocks_in_pair += 1
+                counts.append(blocks_in_pair)
+
+            max_segment_score = max(counts)
+            total_blocks_found = sum(counts)
+
+            if max_segment_score == 0:
+                score = 0
+            else:
+                base_score = 10 if max_segment_score == 1 else 50
+                noise_blocks = total_blocks_found - max_segment_score
+                penalty = noise_blocks * 5
+                score = max(0, base_score - penalty)
+
+            print(score)
+
+            fitnesses.append((score,))
+
+        # scores_closed = []
+        # for i, _ in enumerate(population):
+        #     offset = self.chunk_offset(i)
+        #     scores_closed.append(await self.check_door_state(DOOR_TARGET_POSITIONS, offset))
+
+        # fitnesses = []
+        # for s in scores_closed:
+        #     fitnesses.append((s,))
 
         return fitnesses
 
 
 async def run(server_context):
-    POPULATION_SIZE = 20
-    NGEN = 100
+    POPULATION_SIZE = 1
+    NGEN = 1
 
     population = toolbox.population(n=POPULATION_SIZE)
     hof = tools.HallOfFame(1, similar=np.array_equal)
@@ -211,6 +271,8 @@ async def run(server_context):
     stats.register("max", np.max)
 
     async with MinecraftBatchEvaluator(server_context, POPULATION_SIZE) as evaluator:
+        logger.info(f"Generation {0}")
+
         fitnesses = await evaluator.evaluate(population)
         for individual, fitness in zip(population, fitnesses):
             individual.fitness.values = fitness
@@ -218,22 +280,22 @@ async def run(server_context):
         record = stats.compile(population)
         hof.update(population)
 
-        for _ in range(1, NGEN):
-            await asyncio.sleep(0.25)
+        for i in range(1, NGEN):
+            logger.info(f"Generation {i}")
 
             offspring = toolbox.select(population, len(population))
-            offspring = [creator.Individual(x) for x in offspring]
+            offspring = [toolbox.clone(x) for x in offspring]
 
-            for i in range(1, len(offspring), 2):
+            for j in range(1, len(offspring), 2):
                 if np.random.random() < 0.6:
-                    toolbox.mate(offspring[i - 1], offspring[i])
-                    del offspring[i - 1].fitness.values
-                    del offspring[i].fitness.values
+                    toolbox.mate(offspring[j - 1], offspring[j])
+                    del offspring[j - 1].fitness.values
+                    del offspring[j].fitness.values
 
-            for i in range(len(offspring)):
+            for j in range(len(offspring)):
                 if np.random.random() < 0.3:
-                    toolbox.mutate(offspring[i])
-                    del offspring[i].fitness.values
+                    toolbox.mutate(offspring[j])
+                    del offspring[j].fitness.values
 
             invalid_population = [x for x in offspring if not x.fitness.valid]
 
