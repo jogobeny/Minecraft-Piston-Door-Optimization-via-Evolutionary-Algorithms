@@ -1,3 +1,8 @@
 coloredlogs==15.0.1
+deap==1.4.3
 humanfriendly==10.0
+immutable-views==0.6.1
 mcrcon==0.7.0
+mcschematic==11.4.3
+nbtlib==2.0.4
+numpy==2.3.5

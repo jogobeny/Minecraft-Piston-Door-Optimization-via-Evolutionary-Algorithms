@@ -2,12 +2,14 @@ import logging
 import re
 import subprocess
 import time
+from datetime import datetime
 from pathlib import Path
 
 import coloredlogs
-from aiomcrcon import Client
+import numpy as np
+from mcrcon import MCRcon
 
-from ea.blocks import Block
+from .blocks import Block
 
 logger = logging.getLogger(__name__)
 coloredlogs.install(level="INFO", logger=logger)
@@ -29,6 +31,9 @@ class MinecraftServer:
         self.rcon_password = rcon_password
         self.server_jar_path = server_jar_path
         self.java_path = java_path
+
+    def as_context(self):
+        return MinecraftServerContext(self)
 
     def start_server(self, *, params: list[str] = ["-Xmx2G", "-Xms2G"], timeout: int = 60):
         if self.ip_address is not None:
@@ -80,10 +85,10 @@ class MinecraftServer:
 
         raise RuntimeError("Minecraft server process ended unexpectedly.")
 
-    async def connect_to_server(self):
+    def connect_to_server(self):
         ip = self.ip_address or "127.0.0.1"
-        self.rcon = Client(ip, self.rcon_port, self.rcon_password)
-        await self.rcon.connect()
+        self.rcon = MCRcon(ip, self.rcon_password, self.rcon_port)
+        self.rcon.connect()
         logger.info(f"Successfully connected to RCON at {ip}:{self.rcon_port}")
 
     def kill_server(self):
@@ -104,44 +109,55 @@ class MinecraftServerContext:
 
     def __init__(self, server: MinecraftServer):
         self.server = server
+        self.start_datetime = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
-    async def __aenter__(self):
+        self.schematic_folder = (
+            self.server.server_jar_path.parent
+            / "plugins"
+            / "FastAsyncWorldEdit"
+            / "schematics"
+            / self.start_datetime
+        )
+        self.schematic_folder.mkdir(parents=True, exist_ok=True)
+
+        # NOTE: this is the absolute base position of the grid (the top-left block)
+        # X . . ...
+        # . . . ...
+        # . . . ...
+        # : : :  .
+        self.BASE_POSITION = np.array([0, -60, 0])
+
+    def __enter__(self):
         self.server.start_server()
-        await self.server.connect_to_server()
-        await self.run_command("forceload add 0 0")
+        self.server.connect_to_server()
+        self.run_command("//world world")  # You need to provide a world (Try //world)
+        self.run_command(
+            f"//pos1 {','.join(map(str, self.BASE_POSITION))}"
+        )  # Make a region selection first.
         return self
 
-    async def __aexit__(self, exc_type, exc_value, traceback):
+    def __exit__(self, exc_type, exc_value, traceback):
         if self.server.ip_address is None:
             self.server.kill_server()
 
-        if exc_type is KeyboardInterrupt:
-            return True
-        return False
+        return exc_type is KeyboardInterrupt
 
-    async def run_command(self, cmd: str) -> str:
-        response = await self.server.rcon.send_cmd(cmd)
-        logger.debug(f"Command: {cmd} -> Response: {response}")
+    def run_command(self, cmd: str) -> str:
+        response = self.server.rcon.command(cmd)
+        logger.debug(f"Command: {cmd}, Response: {response}")
         return response
 
-    async def set_block(self, x: int, y: int, z: int, block: Block | str):
-        if isinstance(block, Block):
-            namespaced_id = block.namespaced_id
-        else:
-            namespaced_id = block
+    def set_block(self, position: tuple[int, int, int], block: Block):
+        x, y, z = position
+        self.run_command(f"setblock {x} {y} {z} {block.namespaced_id}")
 
-        await self.run_command(f"setblock {x} {y} {z} {namespaced_id}")
+    def clear_area(self, position1: tuple[int, int, int], position2: tuple[int, int, int]):
+        self.run_command(f"//pos1 {','.join(map(str, position1))}")
+        self.run_command(f"//pos2 {','.join(map(str, position2))}")
+        self.run_command("//set minecraft:air")
 
-    async def fill(self, x1: int, y1: int, z1: int, x2: int, y2: int, z2: int, block: Block | str):
-        if isinstance(block, Block):
-            namespaced_id = block.namespaced_id
-        else:
-            namespaced_id = block
-
-        await self.run_command(f"fill {x1} {y1} {z1} {x2} {y2} {z2} {namespaced_id}")
-
-    async def clear_area(self, x1: int, y1: int, z1: int, x2: int, y2: int, z2: int):
-        await self.fill(x1, y1, z1, x2, y2, z2, "minecraft:air")
-        await self.run_command(
+        x1, y1, z1 = position1
+        x2, y2, z2 = position2
+        self.run_command(
             f"kill @e[type=item, x={x1}, y={y1}, z={z1}, dx={x2-x1}, dy={y2-y1}, dz={z2-z1}]"
         )

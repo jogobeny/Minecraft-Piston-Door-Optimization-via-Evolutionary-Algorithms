@@ -1,7 +1,15 @@
+cache/
+config/
 libraries/
 logs/
+plugins/
 versions/
 world/
+world_nether/
+world_the_end/
+
 *.json
+*.yml
+.console_history
 eula.txt
 server.jar
