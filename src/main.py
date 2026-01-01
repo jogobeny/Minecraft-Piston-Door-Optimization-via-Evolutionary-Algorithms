@@ -1,12 +1,20 @@
 import argparse
-import asyncio
+from argparse import Namespace
 from pathlib import Path
 
-import ea
-from server import MinecraftServer, MinecraftServerContext
+from .pipeline import run
+from .server import MinecraftServer
 
 
-async def main():
+class Args(Namespace):
+    ip: str | None
+    rcon_port: int
+    rcon_password: str
+    server_jar_path: Path
+    java_path: str
+
+
+def main():
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument(
         "--ip",
@@ -26,19 +34,17 @@ async def main():
         help="Path to Java 21 executable",
     )
 
-    args = parser.parse_args()
+    args = parser.parse_args(namespace=Args())
 
-    async with MinecraftServerContext(
-        MinecraftServer(
-            ip_address=args.ip,
-            rcon_port=args.rcon_port,
-            rcon_password=args.rcon_password,
-            server_jar_path=args.server_jar_path,
-            java_path=args.java_path,
-        )
-    ) as server_context:
-        await ea.run(server_context)
+    with MinecraftServer(
+        ip_address=args.ip,
+        rcon_port=args.rcon_port,
+        rcon_password=args.rcon_password,
+        server_jar_path=args.server_jar_path,
+        java_path=args.java_path,
+    ).as_context() as ctx:
+        run(ctx)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
