@@ -90,7 +90,21 @@ def random_torch_position():
 def create_individual():
     sx, sy, sz = BOUNDS
 
-    individual = np.random.choice(POSSIBLE_BLOCKS, size=(sy, sz, sx))
+    individual = np.empty((sy, sz, sx), dtype=object)
+    for y in range(sy):
+        for z in range(sz):
+            for x in range(sx):
+                not_redstone = False
+                if y > 0:
+                    block_below = individual[y - 1, z, x]
+                    if block_below not in SOLID_BLOCKS:
+                        not_redstone = True
+
+                if not_redstone:
+                    individual[y, z, x] = np.random.choice(SOLID_BLOCKS + [blocks.AIR])
+                else:
+                    individual[y, z, x] = np.random.choice(POSSIBLE_BLOCKS)
+
     torch_position = random_torch_position()
 
     return individual, torch_position
@@ -139,6 +153,27 @@ def dummy_evaluate(individual, grid_width: int, server_context: MinecraftServerC
 
 
 def dummy_mate(ind1, ind2):
+    axis = np.random.choice([1, 2])  # 1: z-axis, 2: x-axis
+
+    point = np.random.randint(1, ind1.shape[axis])
+
+    if axis == 1:
+        ind1[:, point:, :], ind2[:, point:, :] = (
+            ind2[:, point:, :].copy(),
+            ind1[:, point:, :].copy(),
+        )
+    else:
+        ind1[:, :, point:], ind2[:, :, point:] = (
+            ind2[:, :, point:].copy(),
+            ind1[:, :, point:].copy(),
+        )
+
+    if np.random.rand() < 0.1:
+        ind1.torch_position, ind2.torch_position = (
+            ind2.torch_position.copy(),
+            ind1.torch_position.copy(),
+        )
+
     return ind1, ind2
 
 
@@ -146,9 +181,30 @@ toolbox.register("mate", dummy_mate)
 
 
 def dummy_mutate(individual, indpb):
-    for index in np.ndindex(individual.shape):
-        if np.random.rand() < indpb:
-            individual[index] = np.random.choice(POSSIBLE_BLOCKS)
+    sy, sz, sx = individual.shape
+
+    for y in range(sy):
+        for z in range(sz):
+            for x in range(sx):
+                if np.random.rand() < indpb:
+                    not_redstone = False
+                    if y > 0:
+                        block_below = individual[y - 1, z, x]
+                        if block_below not in SOLID_BLOCKS:
+                            not_redstone = True
+
+                    if not_redstone:
+                        individual[y, z, x] = np.random.choice(SOLID_BLOCKS + [blocks.AIR])
+                    else:
+                        individual[y, z, x] = np.random.choice(POSSIBLE_BLOCKS)
+
+                    if y < sy - 1:
+                        block_above = individual[y + 1, z, x]
+                        if (
+                            block_above == blocks.REDSTONE_DUST
+                            and individual[y, z, x] not in SOLID_BLOCKS
+                        ):
+                            individual[y + 1, z, x] = blocks.AIR
 
     if np.random.rand() < 0.1:
         individual.torch_position = random_torch_position()
@@ -164,7 +220,7 @@ def build_individual(individual, offset: np.ndarray, schem: MCSchematic | None =
     if schem is None:
         schem = mcschematic.MCSchematic()
     for y, z, x in np.ndindex(individual.shape):
-        block = individual[y, x, z]
+        block = individual[y, z, x]
         position = global_position(np.array([x, y, z]), offset)
         schem.setBlock(tuple(position.tolist()), block.namespaced_id)
     return schem
@@ -223,8 +279,9 @@ def preprocess_population(
 
 
 def run(server_context: MinecraftServerContext):
-    POPULATION_SIZE = 20
-    NGEN = 10
+    POPULATION_SIZE = 50
+    NGEN = 100
+
     generation_tracker = {"current": 0}
 
     grid_width = int(np.ceil(np.sqrt(POPULATION_SIZE)))
