@@ -1,5 +1,6 @@
 import logging
 import time
+from pathlib import Path
 
 import coloredlogs
 import joblib
@@ -123,7 +124,9 @@ toolbox.register("individual", init_numpy_individual, creator.Individual, create
 toolbox.register("population", tools.initRepeat, list, toolbox.individual)
 
 
-def dummy_evaluate(individual, grid_width: int, server_context: MinecraftServerContext):
+def dummy_evaluate(
+    individual, grid_width: int, schematic_on: MCSchematic, schematic_off: MCSchematic
+):
     grid_x = individual.id % grid_width
     grid_z = individual.id // grid_width
     chunk_offset = np.array([grid_x * 16, 0, grid_z * 16])
@@ -139,18 +142,59 @@ def dummy_evaluate(individual, grid_width: int, server_context: MinecraftServerC
 
     torch_position = global_position(individual.torch_position, chunk_offset)
 
+    max_score = 0
+
+    def get_block_from_schematic(position: np.ndarray, schematic: MCSchematic):
+        schematic_position = (
+            position[0],
+            position[1] + 60,
+            position[2],
+        )  # schematic is relative to y=-60
+
+        block_id = schematic._structure._blockStates.get(schematic_position)
+        if block_id is None:
+            return blocks.AIR.namespaced_id
+
+        return schematic._structure._blockPalette[block_id]
+
     for lx, lz in perimeter:
         block_position = global_position(np.array([lx, -60, lz]), chunk_offset)
         if np.array_equal(block_position, torch_position):
             continue
 
-        response = server_context.run_command(
-            f"execute if block {' '.join(map(str, block_position))} minecraft:stone if block {' '.join(map(str, block_position + np.array([0, 1, 0])))} minecraft:stone"
-        )
-        if response and "Test passed" in response:
-            return (1,)
+        # NOTE: strict evaluation
+        # response = server_context.run_command(
+        #     f"execute if block {' '.join(map(str, block_position))} minecraft:stone if block {' '.join(map(str, block_position + np.array([0, 1, 0])))} minecraft:stone"
+        # )
+        # if response and "Test passed" in response:
+        #     return (1,)
 
-    return (0,)
+        score_lower = 0
+        block_on = get_block_from_schematic(block_position, schematic_on)
+        block_off = get_block_from_schematic(block_position, schematic_off)
+        if "minecraft:stone" in block_on:
+            score_lower += 0.5
+            if "minecraft:air" in block_off:
+                score_lower += 0.5
+        elif "minecraft:air" not in block_on:
+            score_lower += 0.1
+
+        score_upper = 0
+        block_on = get_block_from_schematic(block_position + np.array([0, 1, 0]), schematic_on)
+        block_off = get_block_from_schematic(block_position + np.array([0, 1, 0]), schematic_off)
+        if "minecraft:stone" in block_on:
+            score_upper += 0.5
+            if "minecraft:air" in block_off:
+                score_upper += 0.5
+        elif "minecraft:air" not in block_on:
+            score_upper += 0.1
+
+        max_score = max(max_score, max(score_lower, score_upper))
+
+        if max_score >= 1.0:
+            return (1.0,)
+
+    return (max_score,)
 
 
 def dummy_mate(ind1, ind2):
@@ -220,11 +264,22 @@ toolbox.register("select", tools.selTournament, tournsize=3)
 def build_individual(individual, offset: np.ndarray, schem: MCSchematic | None = None):
     if schem is None:
         schem = mcschematic.MCSchematic()
+
     for y, z, x in np.ndindex(individual.shape):
         block = individual[y, z, x]
         position = global_position(np.array([x, y, z]), offset)
         schem.setBlock(tuple(position.tolist()), block.namespaced_id)
     return schem
+
+
+def wait_for_file(filepath: Path, timeout: float = 5.0):
+    start_time = time.monotonic()
+
+    # TODO: i guess this could be problematic if the file is created but not yet fully written
+    while not filepath.is_file():
+        if time.monotonic() - start_time > timeout:
+            raise TimeoutError(f"Timeout waiting for file: {filepath}")
+        time.sleep(0.05)
 
 
 def preprocess_population(
@@ -239,13 +294,19 @@ def preprocess_population(
     # NOTE: bulding and evaluating individuals are expensive
     # this will hash (genome, torch_position) to avoid duplicates
     # `toolbox.map` expects fitnesses as return value, so we can do it here
-    unique_map = {}
-    unique_list = []
+    population_with_hashes = []
     for ind in population:
         signature = (ind.view(np.ndarray), ind.torch_position)
-        ind_hash = joblib.hash(signature)
-        if ind_hash not in unique_map:
-            unique_map[ind_hash] = ind
+        population_with_hashes.append((joblib.hash(signature), ind))
+
+    unique_list = []
+    unique_hashes = []
+    seen_hashes = set()
+
+    for h, ind in population_with_hashes:
+        if h not in seen_hashes:
+            seen_hashes.add(h)
+            unique_hashes.append(h)
             unique_list.append(ind)
 
     # NOTE: this does not correspond directly to the individuals
@@ -275,6 +336,8 @@ def preprocess_population(
 
     time.sleep(0.25)
 
+    # == phase 1: with redstone torches ==
+
     for ind in unique_list:
         grid_x = ind.id % grid_width
         grid_z = ind.id // grid_width
@@ -284,23 +347,61 @@ def preprocess_population(
         torch_position = global_position(np.array([tx, ty, tz]), offset)
         server_context.set_block(torch_position, Block("minecraft:redstone_torch"))
 
-    time.sleep(0.25)
+    time.sleep(0.5)
+
+    server_context.run_command(f"//pos1 0,-60,0")
+    server_context.run_command(f"//pos2 {grid_width * 16 - 1},-56,{grid_width * 16 - 1}")
+    server_context.run_command("//copy")
+    server_context.run_command(
+        f"//schematic save {server_context.schematic_folder.name}/{str(generation_tracker['current'])}.eval_on sponge.2"
+    )
+
+    wait_for_file(
+        server_context.schematic_folder / f"{str(generation_tracker['current'])}.eval_on.schem"
+    )
+
+    schem_on = mcschematic.MCSchematic(
+        f"{server_context.schematic_folder / str(generation_tracker['current'])}.eval_on.schem"
+    )
+
+    # == phase 2: without redstone torches ==
+
+    for ind in unique_list:
+        grid_x = ind.id % grid_width
+        grid_z = ind.id // grid_width
+        offset = np.array([grid_x * 16, 0, grid_z * 16])
+
+        tx, ty, tz = ind.torch_position
+        torch_position = global_position(np.array([tx, ty, tz]), offset)
+        server_context.set_block(torch_position, blocks.AIR)
+
+    time.sleep(0.5)
+
+    server_context.run_command(f"//pos1 0,-60,0")
+    server_context.run_command(f"//pos2 {grid_width * 16 - 1},-56,{grid_width * 16 - 1}")
+    server_context.run_command("//copy")
+    server_context.run_command(
+        f"//schematic save {server_context.schematic_folder.name}/{str(generation_tracker['current'])}.eval_off sponge.2"
+    )
+
+    wait_for_file(
+        server_context.schematic_folder / f"{str(generation_tracker['current'])}.eval_off.schem"
+    )
+
+    schem_off = mcschematic.MCSchematic(
+        f"{server_context.schematic_folder / str(generation_tracker['current'])}.eval_off.schem"
+    )
+
+    # == phase 3: evaluate ==
 
     fitness_cache = {}
-    for ind in unique_list:
-        signature = (ind.view(np.ndarray), ind.torch_position)
-        ind_hash = joblib.hash(signature)
-
-        fitness = evaluate_func(ind)
-
-        fitness_cache[ind_hash] = fitness
+    for ind, h in zip(unique_list, unique_hashes):
+        fitness = dummy_evaluate(ind, grid_width, schem_on, schem_off)
+        fitness_cache[h] = fitness
 
     fitnesses = []
-    for ind in population:
-        signature = (ind.view(np.ndarray), ind.torch_position)
-        ind_hash = joblib.hash(signature)
-
-        fitness = fitness_cache[ind_hash]
+    for h, ind in population_with_hashes:
+        fitness = fitness_cache[h]
         ind.fitness.values = fitness
         fitnesses.append(fitness)
 
@@ -329,6 +430,8 @@ def run(server_context: MinecraftServerContext):
 
     stats = tools.Statistics(lambda ind: ind.fitness.values)
     stats.register("avg", np.mean)
+    stats.register("std", np.std)
+    stats.register("max", np.max)
 
     algorithms.eaSimple(
         population,
@@ -349,7 +452,9 @@ def run(server_context: MinecraftServerContext):
         server_context.schematic_folder.as_posix(), "best_individual", mcschematic.Version.JE_1_21_5
     )
     server_context.build_schematic(f"{server_context.schematic_folder.name}/best_individual")
-    time.sleep(0.5)
+
+    time.sleep(0.25)
+
     tx, ty, tz = best_ind.torch_position
     torch_position = global_position(np.array([tx, ty, tz]), np.array([0, 0, 0]))
     server_context.set_block(torch_position, Block("minecraft:redstone_torch"))
