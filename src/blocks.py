@@ -4,8 +4,14 @@ from typing import Literal
 
 @dataclass(frozen=True)
 class Block:
-    namespaced_id: str  # https://minecraft.wiki/w/Identifier
+    _namespaced_id: str  # https://minecraft.wiki/w/Identifier
     facing: Literal["down", "east", "north", "south", "up", "west"] | None = None
+
+    @property
+    def namespaced_id(self):
+        if self.facing is not None:
+            return f"{self._namespaced_id}[facing={self.facing}]"
+        return self._namespaced_id
 
 
 AIR = Block("minecraft:air")

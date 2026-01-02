@@ -62,10 +62,8 @@ creator.create("FitnessMax", base.Fitness, weights=(1.0,))
 creator.create("Individual", np.ndarray, fitness=creator.FitnessMax)
 
 
-def create_individual():
-    sx, sy, sz = BOUNDS
-
-    individual = np.random.choice(POSSIBLE_BLOCKS, size=(sy, sz, sx))
+def random_torch_position():
+    sx, sz = BOUNDS[[0, 2]]
 
     tx_min, tx_max = -1, sx
     tz_min, tz_max = -1, sz
@@ -86,7 +84,14 @@ def create_individual():
     else:
         tx, tz = tx_max, (tz_min + 1) + (idx - (2 * sidex_length + sidez_length))
 
-    torch_position = np.array([tx, -60, tz])
+    return np.array([tx, -60, tz])
+
+
+def create_individual():
+    sx, sy, sz = BOUNDS
+
+    individual = np.random.choice(POSSIBLE_BLOCKS, size=(sy, sz, sx))
+    torch_position = random_torch_position()
 
     return individual, torch_position
 
@@ -104,6 +109,32 @@ toolbox.register("population", tools.initRepeat, list, toolbox.individual)
 
 
 def dummy_evaluate(individual, grid_width: int, server_context: MinecraftServerContext):
+    grid_x = individual.id % grid_width
+    grid_z = individual.id // grid_width
+    chunk_offset = np.array([grid_x * 16, 0, grid_z * 16])
+
+    sx, sz = BOUNDS[[0, 2]]
+
+    perimeter = []
+    for lx in range(-1, sx + 1):
+        for lz in range(-1, sz + 1):
+            if 0 <= lx < sx and 0 <= lz < sz:
+                continue
+            perimeter.append((lx, lz))
+
+    torch_position = global_position(individual.torch_position, chunk_offset)
+
+    for lx, lz in perimeter:
+        block_position = global_position(np.array([lx, -60, lz]), chunk_offset)
+        if np.array_equal(block_position, torch_position):
+            continue
+
+        response = server_context.run_command(
+            f"execute if block {' '.join(map(str, block_position))} minecraft:stone if block {' '.join(map(str, block_position + np.array([0, 1, 0])))} minecraft:stone"
+        )
+        if response and "Test passed" in response:
+            return (1,)
+
     return (0,)
 
 
@@ -115,10 +146,17 @@ toolbox.register("mate", dummy_mate)
 
 
 def dummy_mutate(individual, indpb):
+    for index in np.ndindex(individual.shape):
+        if np.random.rand() < indpb:
+            individual[index] = np.random.choice(POSSIBLE_BLOCKS)
+
+    if np.random.rand() < 0.1:
+        individual.torch_position = random_torch_position()
+
     return (individual,)
 
 
-toolbox.register("mutate", dummy_mutate, indpb=0.1)
+toolbox.register("mutate", dummy_mutate, indpb=0.05)
 toolbox.register("select", tools.selTournament, tournsize=3)
 
 
@@ -166,7 +204,7 @@ def preprocess_population(
         f"{server_context.schematic_folder.name}/{str(generation_tracker['current'])}"
     )
 
-    time.sleep(0.5)
+    time.sleep(0.25)
 
     for ind in population:
         grid_x = ind.id % grid_width
@@ -177,14 +215,16 @@ def preprocess_population(
         torch_position = global_position(np.array([tx, ty, tz]), offset)
         server_context.set_block(torch_position, Block("minecraft:redstone_torch"))
 
+    time.sleep(0.25)
+
     generation_tracker["current"] += 1
 
     return list(map(evaluate_func, population))
 
 
 def run(server_context: MinecraftServerContext):
-    POPULATION_SIZE = 5
-    NGEN = 1
+    POPULATION_SIZE = 20
+    NGEN = 10
     generation_tracker = {"current": 0}
 
     grid_width = int(np.ceil(np.sqrt(POPULATION_SIZE)))
