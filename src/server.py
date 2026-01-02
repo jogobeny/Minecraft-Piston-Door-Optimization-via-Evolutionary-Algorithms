@@ -161,3 +161,7 @@ class MinecraftServerContext:
         self.run_command(
             f"kill @e[type=item, x={x1}, y={y1}, z={z1}, dx={x2-x1}, dy={y2-y1}, dz={z2-z1}]"
         )
+
+    def build_schematic(self, schematic_filepath: str):
+        self.run_command(f"/schematic load {schematic_filepath}")
+        self.run_command("//paste -a")

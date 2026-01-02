@@ -5,6 +5,7 @@ import coloredlogs
 import mcschematic
 import numpy as np
 from deap import algorithms, base, creator, tools
+from mcschematic import MCSchematic
 
 from . import blocks
 from .blocks import SOLID_BLOCKS, Block
@@ -90,12 +91,11 @@ def create_individual():
     return individual, torch_position
 
 
-def init_numpy_individual(icls, content_func, index):
+def init_numpy_individual(icls, content_func):
     genome, torch_position = content_func()
     individual = genome.view(icls)
     individual.torch_position = torch_position
     individual.fitness = creator.FitnessMax()
-    individual.id = index
     return individual
 
 
@@ -122,6 +122,16 @@ toolbox.register("mutate", dummy_mutate, indpb=0.1)
 toolbox.register("select", tools.selTournament, tournsize=3)
 
 
+def build_individual(individual, offset: np.ndarray, schem: MCSchematic | None = None):
+    if schem is None:
+        schem = mcschematic.MCSchematic()
+    for y, z, x in np.ndindex(individual.shape):
+        block = individual[y, x, z]
+        position = global_position(np.array([x, y, z]), offset)
+        schem.setBlock(tuple(position.tolist()), block.namespaced_id)
+    return schem
+
+
 def preprocess_population(
     grid_width: int,
     server_context: MinecraftServerContext,
@@ -131,6 +141,11 @@ def preprocess_population(
 ):
     population = list(individuals)
 
+    # NOTE: this does not correspond directly to the individuals
+    # it is just used for positioning in the grid
+    for i, ind in enumerate(population):
+        ind.id = i
+
     server_context.clear_area((0, -60, 0), (grid_width * 16 - 1, -50, grid_width * 16 - 1))
 
     schem = mcschematic.MCSchematic()
@@ -139,11 +154,7 @@ def preprocess_population(
         grid_x = ind.id % grid_width
         grid_z = ind.id // grid_width
         offset = np.array([grid_x * 16, 0, grid_z * 16])
-
-        for y, z, x in np.ndindex(ind.shape):
-            block = ind[y, x, z]
-            position = global_position(np.array([x, y, z]), offset)
-            schem.setBlock(tuple(position.tolist()), block.namespaced_id)
+        build_individual(ind, offset, schem)
 
     schem.save(
         server_context.schematic_folder.as_posix(),
@@ -151,10 +162,9 @@ def preprocess_population(
         mcschematic.Version.JE_1_21_5,
     )
 
-    server_context.run_command(
-        f"/schematic load {server_context.schematic_folder.name}/{generation_tracker['current']}"
+    server_context.build_schematic(
+        f"{server_context.schematic_folder.name}/{str(generation_tracker['current'])}"
     )
-    server_context.run_command(f"//paste -a")
 
     time.sleep(0.5)
 
@@ -172,17 +182,14 @@ def preprocess_population(
     return list(map(evaluate_func, population))
 
 
-def run(server_context):
+def run(server_context: MinecraftServerContext):
     POPULATION_SIZE = 5
     NGEN = 1
     generation_tracker = {"current": 0}
 
     grid_width = int(np.ceil(np.sqrt(POPULATION_SIZE)))
 
-    population = []
-    for i in range(POPULATION_SIZE):
-        individual = toolbox.individual(index=i)
-        population.append(individual)
+    population = toolbox.population(n=POPULATION_SIZE)
 
     def evaluate_wrapper(individual):
         return dummy_evaluate(individual, grid_width, server_context)
@@ -205,3 +212,16 @@ def run(server_context):
         halloffame=hof,
         verbose=True,
     )
+
+    server_context.clear_area((0, -60, 0), (grid_width * 16 - 1, -50, grid_width * 16 - 1))
+
+    best_ind = hof[0]
+    schem = build_individual(best_ind, np.array([0, 0, 0]))
+    schem.save(
+        server_context.schematic_folder.as_posix(), "best_individual", mcschematic.Version.JE_1_21_5
+    )
+    server_context.build_schematic(f"{server_context.schematic_folder.name}/best_individual")
+    time.sleep(0.5)
+    tx, ty, tz = best_ind.torch_position
+    torch_position = global_position(np.array([tx, ty, tz]), np.array([0, 0, 0]))
+    server_context.set_block(torch_position, Block("minecraft:redstone_torch"))
