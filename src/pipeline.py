@@ -2,6 +2,7 @@ import logging
 import time
 
 import coloredlogs
+import joblib
 import mcschematic
 import numpy as np
 from deap import algorithms, base, creator, tools
@@ -235,16 +236,28 @@ def preprocess_population(
 ):
     population = list(individuals)
 
+    # NOTE: bulding and evaluating individuals are expensive
+    # this will hash (genome, torch_position) to avoid duplicates
+    # `toolbox.map` expects fitnesses as return value, so we can do it here
+    unique_map = {}
+    unique_list = []
+    for ind in population:
+        signature = (ind.view(np.ndarray), ind.torch_position)
+        ind_hash = joblib.hash(signature)
+        if ind_hash not in unique_map:
+            unique_map[ind_hash] = ind
+            unique_list.append(ind)
+
     # NOTE: this does not correspond directly to the individuals
     # it is just used for positioning in the grid
-    for i, ind in enumerate(population):
+    for i, ind in enumerate(unique_list):
         ind.id = i
 
     server_context.clear_area((0, -60, 0), (grid_width * 16 - 1, -50, grid_width * 16 - 1))
 
     schem = mcschematic.MCSchematic()
 
-    for ind in population:
+    for ind in unique_list:
         grid_x = ind.id % grid_width
         grid_z = ind.id // grid_width
         offset = np.array([grid_x * 16, 0, grid_z * 16])
@@ -262,7 +275,7 @@ def preprocess_population(
 
     time.sleep(0.25)
 
-    for ind in population:
+    for ind in unique_list:
         grid_x = ind.id % grid_width
         grid_z = ind.id // grid_width
         offset = np.array([grid_x * 16, 0, grid_z * 16])
@@ -273,9 +286,27 @@ def preprocess_population(
 
     time.sleep(0.25)
 
+    fitness_cache = {}
+    for ind in unique_list:
+        signature = (ind.view(np.ndarray), ind.torch_position)
+        ind_hash = joblib.hash(signature)
+
+        fitness = evaluate_func(ind)
+
+        fitness_cache[ind_hash] = fitness
+
+    fitnesses = []
+    for ind in population:
+        signature = (ind.view(np.ndarray), ind.torch_position)
+        ind_hash = joblib.hash(signature)
+
+        fitness = fitness_cache[ind_hash]
+        ind.fitness.values = fitness
+        fitnesses.append(fitness)
+
     generation_tracker["current"] += 1
 
-    return list(map(evaluate_func, population))
+    return fitnesses
 
 
 def run(server_context: MinecraftServerContext):
