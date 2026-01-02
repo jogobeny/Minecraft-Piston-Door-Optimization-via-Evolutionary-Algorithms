@@ -43,7 +43,7 @@ def main():
         server_jar_path=args.server_jar_path,
         java_path=args.java_path,
     ).as_context() as ctx:
-        run(ctx)
+        population, logbook, hof = run(ctx)
 
 
 if __name__ == "__main__":

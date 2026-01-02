@@ -410,7 +410,7 @@ def preprocess_population(
     return fitnesses
 
 
-def run(server_context: MinecraftServerContext):
+def run(server_context: MinecraftServerContext, build_best_at_end: bool = True):
     POPULATION_SIZE = 50
     NGEN = 100
 
@@ -433,7 +433,7 @@ def run(server_context: MinecraftServerContext):
     stats.register("std", np.std)
     stats.register("max", np.max)
 
-    algorithms.eaSimple(
+    population, logbook = algorithms.eaSimple(
         population,
         toolbox,
         cxpb=0.5,
@@ -444,17 +444,22 @@ def run(server_context: MinecraftServerContext):
         verbose=True,
     )
 
-    server_context.clear_area((0, -60, 0), (grid_width * 16 - 1, -50, grid_width * 16 - 1))
+    if build_best_at_end:
+        server_context.clear_area((0, -60, 0), (grid_width * 16 - 1, -50, grid_width * 16 - 1))
 
-    best_ind = hof[0]
-    schem = build_individual(best_ind, np.array([0, 0, 0]))
-    schem.save(
-        server_context.schematic_folder.as_posix(), "best_individual", mcschematic.Version.JE_1_21_5
-    )
-    server_context.build_schematic(f"{server_context.schematic_folder.name}/best_individual")
+        best_ind = hof[0]
+        schem = build_individual(best_ind, np.array([0, 0, 0]))
+        schem.save(
+            server_context.schematic_folder.as_posix(),
+            "best_individual",
+            mcschematic.Version.JE_1_21_5,
+        )
+        server_context.build_schematic(f"{server_context.schematic_folder.name}/best_individual")
 
-    time.sleep(0.25)
+        time.sleep(0.25)
 
-    tx, ty, tz = best_ind.torch_position
-    torch_position = global_position(np.array([tx, ty, tz]), np.array([0, 0, 0]))
-    server_context.set_block(torch_position, Block("minecraft:redstone_torch"))
+        tx, ty, tz = best_ind.torch_position
+        torch_position = global_position(np.array([tx, ty, tz]), np.array([0, 0, 0]))
+        server_context.set_block(torch_position, Block("minecraft:redstone_torch"))
+
+    return population, logbook, hof
