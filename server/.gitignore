@@ -10,6 +10,7 @@ world_the_end/
 
 *.json
 *.yml
+!bukkit.yml
 .console_history
 eula.txt
 server.jar
