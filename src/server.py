@@ -158,10 +158,18 @@ class MinecraftServerContext:
 
         x1, y1, z1 = position1
         x2, y2, z2 = position2
+        floor_y = min(y1, y2) - 1
+        self.run_command(f"//pos1 {x1},{floor_y},{z1}")
+        self.run_command(f"//pos2 {x2},{floor_y},{z2}")
+        self.run_command("//set minecraft:grass_block")
+
+        x1, y1, z1 = position1
+        x2, y2, z2 = position2
         self.run_command(
             f"kill @e[type=item, x={x1}, y={y1}, z={z1}, dx={x2-x1}, dy={y2-y1}, dz={z2-z1}]"
         )
 
     def build_schematic(self, schematic_filepath: str):
+        self.run_command(f"//pos1 0,-60,0")
         self.run_command(f"/schematic load {schematic_filepath}")
         self.run_command("//paste -a")
