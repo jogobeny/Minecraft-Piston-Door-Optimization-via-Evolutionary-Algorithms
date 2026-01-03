@@ -168,42 +168,33 @@ def dummy_evaluate(
 
         return schematic._structure._blockPalette[block_id]
 
+    # NOTE: 0 if redstone torch is destroyed
     if "minecraft:redstone_torch" not in get_block_from_schematic(torch_position, schematic_on):
         return (0.0,)
 
     for lx, lz in perimeter:
         block_position = global_position(np.array([lx, -60, lz]), chunk_offset)
-        # if np.array_equal(block_position, torch_position):
-        #     continue
 
-        # NOTE: strict evaluation
-        # response = server_context.run_command(
-        #     f"execute if block {' '.join(map(str, block_position))} minecraft:stone if block {' '.join(map(str, block_position + np.array([0, 1, 0])))} minecraft:stone"
-        # )
-        # if response and "Test passed" in response:
-        #     return (1,)
-
-        score_lower = 0
+        score = 0
         block_on = get_block_from_schematic(block_position, schematic_on)
         block_off = get_block_from_schematic(block_position, schematic_off)
         if "minecraft:stone" in block_on:
-            score_lower += 0.5
+            score += 0.25
             if "minecraft:air" in block_off:
-                score_lower += 0.5
+                score += 0.25
         elif "minecraft:air" not in block_on:
-            score_lower += 0.1
+            score += 0.1
 
-        score_upper = 0
         block_on = get_block_from_schematic(block_position + np.array([0, 1, 0]), schematic_on)
         block_off = get_block_from_schematic(block_position + np.array([0, 1, 0]), schematic_off)
         if "minecraft:stone" in block_on:
-            score_upper += 0.5
+            score += 0.25
             if "minecraft:air" in block_off:
-                score_upper += 0.5
+                score += 0.25
         elif "minecraft:air" not in block_on:
-            score_upper += 0.1
+            score += 0.1
 
-        max_score = max(max_score, max(score_lower, score_upper))
+        max_score = max(max_score, score)
 
         if max_score >= 1.0:
             return (1.0,)
@@ -485,7 +476,7 @@ def preprocess_population(
 
 def run(server_context: MinecraftServerContext, build_best_at_end: bool = True):
     POPULATION_SIZE = 100
-    NGEN = 1000
+    NGEN = 300
 
     generation_tracker = {"current": 0}
 
