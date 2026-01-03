@@ -65,37 +65,49 @@ creator.create("Individual", np.ndarray, fitness=creator.FitnessMax)
 
 
 def random_torch_position():
+    # sx, sz = BOUNDS[[0, 2]]
+
+    # tx_min, tx_max = -1, sx
+    # tz_min, tz_max = -1, sz
+
+    # sidex_length = (tx_max - 1) - (tx_min + 1) + 1
+    # sidez_length = (tz_max - 1) - (tz_min + 1) + 1
+
+    # total_slots = 2 * sidex_length + 2 * sidez_length
+
+    # idx = np.random.randint(0, total_slots)
+
+    # if idx < sidex_length:
+    #     tx, tz = tx_min + 1 + idx, tz_min
+    # elif idx < 2 * sidex_length:
+    #     tx, tz = (tx_min + 1) + (idx - sidex_length), tz_max
+    # elif idx < 2 * sidex_length + sidez_length:
+    #     tx, tz = tx_min, (tz_min + 1) + (idx - 2 * sidex_length)
+    # else:
+    #     tx, tz = tx_max, (tz_min + 1) + (idx - (2 * sidex_length + sidez_length))
+
+    # return np.array([tx, -60, tz])
+
     sx, sz = BOUNDS[[0, 2]]
-
-    tx_min, tx_max = -1, sx
-    tz_min, tz_max = -1, sz
-
-    sidex_length = (tx_max - 1) - (tx_min + 1) + 1
-    sidez_length = (tz_max - 1) - (tz_min + 1) + 1
-
-    total_slots = 2 * sidex_length + 2 * sidez_length
-
-    idx = np.random.randint(0, total_slots)
-
-    if idx < sidex_length:
-        tx, tz = tx_min + 1 + idx, tz_min
-    elif idx < 2 * sidex_length:
-        tx, tz = (tx_min + 1) + (idx - sidex_length), tz_max
-    elif idx < 2 * sidex_length + sidez_length:
-        tx, tz = tx_min, (tz_min + 1) + (idx - 2 * sidex_length)
-    else:
-        tx, tz = tx_max, (tz_min + 1) + (idx - (2 * sidex_length + sidez_length))
-
-    return np.array([tx, -60, tz])
+    tx = np.random.randint(0, sx)
+    tz = np.random.randint(0, sz)
+    return np.array([tx, 0, tz])
 
 
 def create_individual():
     sx, sy, sz = BOUNDS
 
+    torch_position = random_torch_position()
+    tx, ty, tz = torch_position
+
     individual = np.empty((sy, sz, sx), dtype=object)
     for y in range(sy):
         for z in range(sz):
             for x in range(sx):
+                if x == tx and y == ty and z == tz:
+                    individual[y, z, x] = blocks.AIR
+                    continue
+
                 not_redstone = False
                 if y > 0:
                     block_below = individual[y - 1, z, x]
@@ -106,8 +118,6 @@ def create_individual():
                     individual[y, z, x] = np.random.choice(SOLID_BLOCKS + [blocks.AIR])
                 else:
                     individual[y, z, x] = np.random.choice(POSSIBLE_BLOCKS)
-
-    torch_position = random_torch_position()
 
     return individual, torch_position
 
@@ -141,6 +151,7 @@ def dummy_evaluate(
             perimeter.append((lx, lz))
 
     torch_position = global_position(individual.torch_position, chunk_offset)
+    torch_position[1] -= 60  # schematic is relative to y=-60
 
     max_score = 0
 
@@ -157,10 +168,13 @@ def dummy_evaluate(
 
         return schematic._structure._blockPalette[block_id]
 
+    if "minecraft:redstone_torch" not in get_block_from_schematic(torch_position, schematic_on):
+        return (0.0,)
+
     for lx, lz in perimeter:
         block_position = global_position(np.array([lx, -60, lz]), chunk_offset)
-        if np.array_equal(block_position, torch_position):
-            continue
+        # if np.array_equal(block_position, torch_position):
+        #     continue
 
         # NOTE: strict evaluation
         # response = server_context.run_command(
@@ -227,10 +241,14 @@ toolbox.register("mate", dummy_mate)
 
 def dummy_mutate(individual, indpb):
     sy, sz, sx = individual.shape
+    tx, ty, tz = individual.torch_position
 
     for y in range(sy):
         for z in range(sz):
             for x in range(sx):
+                if x == tx and y == ty and z == tz:
+                    continue
+
                 if np.random.rand() < indpb:
                     not_redstone = False
                     if y > 0:
@@ -253,11 +271,50 @@ def dummy_mutate(individual, indpb):
 
     if np.random.rand() < 0.1:
         individual.torch_position = random_torch_position()
+        ntx, nty, ntz = individual.torch_position
+        individual[nty, ntz, ntx] = blocks.AIR
 
     return (individual,)
 
 
-toolbox.register("mutate", dummy_mutate, indpb=0.05)
+# def dummy_mutate(individual, indpb, sigma=2.5):
+#     sy, sz, sx = individual.shape
+#     tx, ty, tz = individual.torch_position
+#     ty_local = ty + 60
+
+#     for y in range(sy):
+#         for z in range(sz):
+#             for x in range(sx):
+#                 distance = (x - tx) ** 2 + (y - ty_local) ** 2 + (z - tz) ** 2
+#                 local_probability = indpb * np.exp(-distance / (2 * sigma**2))
+
+#                 if np.random.rand() < local_probability:
+#                     not_redstone = False
+#                     if y > 0:
+#                         block_below = individual[y - 1, z, x]
+#                         if block_below not in SOLID_BLOCKS:
+#                             not_redstone = True
+
+#                     if not_redstone:
+#                         individual[y, z, x] = np.random.choice(SOLID_BLOCKS + [blocks.AIR])
+#                     else:
+#                         individual[y, z, x] = np.random.choice(POSSIBLE_BLOCKS)
+
+#                     if y < sy - 1:
+#                         block_above = individual[y + 1, z, x]
+#                         if (
+#                             block_above == blocks.REDSTONE_DUST
+#                             and individual[y, z, x] not in SOLID_BLOCKS
+#                         ):
+#                             individual[y + 1, z, x] = blocks.AIR
+
+#     if np.random.rand() < 0.1:
+#         individual.torch_position = random_torch_position()
+
+#     return (individual,)
+
+
+toolbox.register("mutate", dummy_mutate, indpb=0.2)
 toolbox.register("select", tools.selTournament, tournsize=3)
 
 
@@ -275,10 +332,20 @@ def build_individual(individual, offset: np.ndarray, schem: MCSchematic | None =
 def wait_for_file(filepath: Path, timeout: float = 5.0):
     start_time = time.monotonic()
 
-    # TODO: i guess this could be problematic if the file is created but not yet fully written
     while not filepath.is_file():
         if time.monotonic() - start_time > timeout:
             raise TimeoutError(f"Timeout waiting for file: {filepath}")
+        time.sleep(0.05)
+
+    while True:
+        if time.monotonic() - start_time > timeout:
+            raise TimeoutError(f"Timeout waiting for file: {filepath}")
+
+        size = filepath.stat().st_size
+        if size > 0:
+            time.sleep(0.05)
+            return
+
         time.sleep(0.05)
 
 
@@ -314,7 +381,9 @@ def preprocess_population(
     for i, ind in enumerate(unique_list):
         ind.id = i
 
-    server_context.clear_area((0, -60, 0), (grid_width * 16 - 1, -50, grid_width * 16 - 1))
+    server_context.clear_area(
+        (0, -60, 0), (grid_width * 16 - 1, -60 + BOUNDS[1] * 2, grid_width * 16 - 1)
+    )
 
     schem = mcschematic.MCSchematic()
 
@@ -341,7 +410,7 @@ def preprocess_population(
     for ind in unique_list:
         grid_x = ind.id % grid_width
         grid_z = ind.id // grid_width
-        offset = np.array([grid_x * 16, 0, grid_z * 16])
+        offset = np.array([grid_x * 16, -60, grid_z * 16])
 
         tx, ty, tz = ind.torch_position
         torch_position = global_position(np.array([tx, ty, tz]), offset)
@@ -350,7 +419,9 @@ def preprocess_population(
     time.sleep(0.5)
 
     server_context.run_command(f"//pos1 0,-60,0")
-    server_context.run_command(f"//pos2 {grid_width * 16 - 1},-56,{grid_width * 16 - 1}")
+    server_context.run_command(
+        f"//pos2 {grid_width * 16 - 1},{-60 + BOUNDS[1] * 2},{grid_width * 16 - 1}"
+    )
     server_context.run_command("//copy")
     server_context.run_command(
         f"//schematic save {server_context.schematic_folder.name}/{str(generation_tracker['current'])}.eval_on sponge.2"
@@ -369,7 +440,7 @@ def preprocess_population(
     for ind in unique_list:
         grid_x = ind.id % grid_width
         grid_z = ind.id // grid_width
-        offset = np.array([grid_x * 16, 0, grid_z * 16])
+        offset = np.array([grid_x * 16, -60, grid_z * 16])
 
         tx, ty, tz = ind.torch_position
         torch_position = global_position(np.array([tx, ty, tz]), offset)
@@ -378,7 +449,9 @@ def preprocess_population(
     time.sleep(0.5)
 
     server_context.run_command(f"//pos1 0,-60,0")
-    server_context.run_command(f"//pos2 {grid_width * 16 - 1},-56,{grid_width * 16 - 1}")
+    server_context.run_command(
+        f"//pos2 {grid_width * 16 - 1},{-60 + BOUNDS[1] * 2},{grid_width * 16 - 1}"
+    )
     server_context.run_command("//copy")
     server_context.run_command(
         f"//schematic save {server_context.schematic_folder.name}/{str(generation_tracker['current'])}.eval_off sponge.2"
@@ -411,8 +484,8 @@ def preprocess_population(
 
 
 def run(server_context: MinecraftServerContext, build_best_at_end: bool = True):
-    POPULATION_SIZE = 50
-    NGEN = 100
+    POPULATION_SIZE = 100
+    NGEN = 1000
 
     generation_tracker = {"current": 0}
 
@@ -445,7 +518,9 @@ def run(server_context: MinecraftServerContext, build_best_at_end: bool = True):
     )
 
     if build_best_at_end:
-        server_context.clear_area((0, -60, 0), (grid_width * 16 - 1, -50, grid_width * 16 - 1))
+        server_context.clear_area(
+            (0, -60, 0), (grid_width * 16 - 1, -60 + BOUNDS[1] * 2, grid_width * 16 - 1)
+        )
 
         best_ind = hof[0]
         schem = build_individual(best_ind, np.array([0, 0, 0]))
@@ -459,7 +534,7 @@ def run(server_context: MinecraftServerContext, build_best_at_end: bool = True):
         time.sleep(0.25)
 
         tx, ty, tz = best_ind.torch_position
-        torch_position = global_position(np.array([tx, ty, tz]), np.array([0, 0, 0]))
+        torch_position = global_position(np.array([tx, ty, tz]), np.array([0, -60, 0]))
         server_context.set_block(torch_position, Block("minecraft:redstone_torch"))
 
     return population, logbook, hof

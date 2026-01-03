@@ -1,4 +1,5 @@
 import argparse
+import pickle
 from argparse import Namespace
 from pathlib import Path
 
@@ -44,6 +45,9 @@ def main():
         java_path=args.java_path,
     ).as_context() as ctx:
         population, logbook, hof = run(ctx)
+
+        with open(f"{ctx.start_datetime}.pkl", "wb") as f:
+            pickle.dump({"population": population, "logbook": logbook, "hof": hof}, f)
 
 
 if __name__ == "__main__":
