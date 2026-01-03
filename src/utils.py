@@ -8,7 +8,7 @@ import mcschematic
 import numpy as np
 
 from .blocks import Block
-from .pipeline import build_individual, global_position
+from .pipeline import POSSIBLE_BLOCKS, build_individual, global_position
 from .server import MinecraftServer
 
 
@@ -49,21 +49,32 @@ def graph(args):
     folder_path = Path(args.folder)
     pickle_files = list(folder_path.glob("*.pkl"))
 
-    fig, ax1 = plt.subplots(figsize=(12, 8))
-    ax2 = ax1.twinx()
-    cmap = plt.cm.get_cmap("nipy_spectral")
-    num_files = len(pickle_files)
-    colours = [cmap(i) for i in np.linspace(0, 0.85, num_files)]
+    with open(pickle_files[0], "rb") as pf:
+        test_data = pickle.load(pf)
+        has_weights = "weights" in test_data["logbook"].chapters
 
-    lines = []
-    labels = []
+    n_rows = 3 if has_weights else 2
+    fig, axes = plt.subplots(n_rows, 1, figsize=(12, 4 * n_rows + 2), sharex=True)
+
+    if n_rows == 1:
+        axes = [axes]
+    ax1, ax2 = axes[0], axes[1]
+    ax3 = axes[2] if has_weights else None
+
+    cmap = plt.get_cmap("nipy_spectral")
+    colours = [cmap(i) for i in np.linspace(0, 0.85, len(pickle_files))]
+
+    weights_colors = [plt.cm.tab20(i % 20) for i in range(len(POSSIBLE_BLOCKS))]
+    weights_labels = [b.namespaced_id.split(":")[-1] for b in POSSIBLE_BLOCKS]
+    weights_generations = None
+    weights_data = None
 
     for i, (f, c) in enumerate(zip(pickle_files, colours)):
         with open(f, "rb") as pf:
             data = pickle.load(pf)
 
+        label = f"Run {i+1}"
         logbook = data["logbook"]
-
         generations = np.array(logbook.select("gen"))
 
         chapter_fitness = logbook.chapters["fitness"]
@@ -71,28 +82,9 @@ def graph(args):
         fitness_stds = np.array(chapter_fitness.select("std"))
         fitness_maxs = np.array(chapter_fitness.select("max"))
 
-        chapter_blocks = logbook.chapters["blocks"]
-        blocks_avgs = np.array(chapter_blocks.select("avg"))
-        blocks_mins = np.array(chapter_blocks.select("min"))
-
-        label = f"Run {i+1}"
-
-        (l1,) = ax1.plot(
-            generations,
-            fitness_maxs,
-            color=c,
-            linestyle="-",
-            linewidth=2,
-            label=f"{label} fitness max",
-        )
-        (l2,) = ax1.plot(
-            generations,
-            fitness_avgs,
-            color=c,
-            linestyle="--",
-            linewidth=1.5,
-            alpha=0.7,
-            label=f"{label} fitness avg",
+        ax1.plot(generations, fitness_maxs, color=c, ls="-", lw=2, label=f"{label} - max")
+        ax1.plot(
+            generations, fitness_avgs, color=c, ls="--", lw=1, alpha=0.7, label=f"{label} - avg"
         )
         ax1.fill_between(
             generations,
@@ -102,36 +94,43 @@ def graph(args):
             alpha=0.1,
         )
 
-        (l3,) = ax2.plot(
-            generations,
-            blocks_mins,
-            color=c,
-            linestyle=":",
-            linewidth=2,
-            alpha=0.8,
-            label=f"{label} blocks min",
-        )
-        (l4,) = ax2.plot(
-            generations,
-            blocks_avgs,
-            color=c,
-            linestyle="-.",
-            linewidth=1,
-            alpha=0.5,
-            label=f"{label} blocks avg",
-        )
+        if "blocks" in logbook.chapters:
+            chapter_blocks = logbook.chapters["blocks"]
+            blocks_avgs = np.array(chapter_blocks.select("avg"))
+            blocks_mins = np.array(chapter_blocks.select("min"))
 
-        lines.extend([l1, l2, l3, l4])
-        labels.extend([l1.get_label(), l2.get_label(), l3.get_label(), l4.get_label()])
+            ax2.plot(generations, blocks_mins, color=c, ls=":", lw=2, label=f"{label} - min")
+            ax2.plot(
+                generations, blocks_avgs, color=c, ls="-.", lw=1, alpha=0.7, label=f"{label} - avg"
+            )
 
-    ax1.set_xlabel("Generation")
+        if has_weights and "weights" in logbook.chapters:
+            chapter_weights = logbook.chapters["weights"]
+            weights_avgs = np.array(chapter_weights.select("avg"))
+            weights_generations = generations
+            weights_data = weights_avgs.T
+
     ax1.set_ylabel("Fitness")
-    ax2.set_ylabel("Block Count")
+    ax1.grid(True, linestyle="--", alpha=0.5)
+    ax1.legend(loc="upper left", bbox_to_anchor=(1.02, 1), fontsize="small")
 
-    plt.grid(True, which="both", linestyle="--", alpha=0.5)
-    h1, l1 = ax1.get_legend_handles_labels()
-    h2, l2 = ax2.get_legend_handles_labels()
-    plt.legend(h1 + h2, l1 + l2, bbox_to_anchor=(1.15, 1), loc="upper left")
+    ax2.set_ylabel("Block Count")
+    ax2.grid(True, linestyle="--", alpha=0.5)
+    ax2.legend(loc="upper left", bbox_to_anchor=(1.02, 1), fontsize="small")
+
+    if weights_generations is not None and weights_data is not None:
+        ax3.stackplot(
+            weights_generations,
+            weights_data,
+            labels=weights_labels,
+            colors=weights_colors,
+            alpha=0.8,
+        )
+        ax3.set_ylabel("Block Probability")
+        ax3.set_xlabel("Generation")
+        ax3.set_ylim(0, 1.0)
+        ax3.grid(True, linestyle="--", alpha=0.3)
+        ax3.legend(loc="upper left", bbox_to_anchor=(1.02, 1), fontsize="small")
 
     plt.tight_layout()
     plt.show()

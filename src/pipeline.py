@@ -53,6 +53,8 @@ GLOBAL_OFFSET = np.array([4, 0, 4])
 
 POSSIBLE_BLOCKS = [blocks.AIR, blocks.REDSTONE_DUST] + SOLID_BLOCKS
 
+NUM_BLOCK_TYPES = len(POSSIBLE_BLOCKS)
+
 
 def global_position(local_position: np.ndarray, local_offset: np.ndarray):
     return local_position + GLOBAL_OFFSET + local_offset
@@ -100,6 +102,10 @@ def create_individual():
     torch_position = random_torch_position()
     tx, ty, tz = torch_position
 
+    raw_weights = np.ones(NUM_BLOCK_TYPES) + np.random.normal(0, 0.1, NUM_BLOCK_TYPES)
+    raw_weights = np.maximum(raw_weights, 0.01)
+    block_weights = raw_weights / raw_weights.sum()
+
     individual = np.empty((sy, sz, sx), dtype=object)
     for y in range(sy):
         for z in range(sz):
@@ -108,24 +114,21 @@ def create_individual():
                     individual[y, z, x] = blocks.AIR
                     continue
 
-                not_redstone = False
-                if y > 0:
-                    block_below = individual[y - 1, z, x]
-                    if block_below not in SOLID_BLOCKS:
-                        not_redstone = True
+                individual[y, z, x] = np.random.choice(POSSIBLE_BLOCKS, p=block_weights)
+                if individual[y, z, x] == blocks.REDSTONE_DUST:
+                    if y > 0:
+                        block_below = individual[y - 1, z, x]
+                        if block_below not in SOLID_BLOCKS:
+                            individual[y, z, x] = blocks.AIR
 
-                if not_redstone:
-                    individual[y, z, x] = np.random.choice(SOLID_BLOCKS + [blocks.AIR])
-                else:
-                    individual[y, z, x] = np.random.choice(POSSIBLE_BLOCKS)
-
-    return individual, torch_position
+    return individual, torch_position, block_weights
 
 
 def init_numpy_individual(icls, content_func):
-    genome, torch_position = content_func()
+    genome, torch_position, block_weights = content_func()
     individual = genome.view(icls)
     individual.torch_position = torch_position
+    individual.block_weights = block_weights
     individual.fitness = creator.FitnessMax()
     return individual
 
@@ -205,7 +208,8 @@ def dummy_evaluate(
         if max_score >= 1.0:
             return (1.0 + sparsity_bonus,)
 
-    return (max_score + sparsity_bonus,)
+    # NOTE: do not reward sparsity if the door does not work
+    return (max_score,)
 
 
 def dummy_mate(ind1, ind2):
@@ -230,6 +234,12 @@ def dummy_mate(ind1, ind2):
             ind1.torch_position.copy(),
         )
 
+    if np.random.rand() < 0.2:  # Self-adaptation
+        ind1.block_weights, ind2.block_weights = (
+            ind2.block_weights.copy(),
+            ind1.block_weights.copy(),
+        )
+
     return ind1, ind2
 
 
@@ -240,6 +250,12 @@ def dummy_mutate(individual, indpb):
     sy, sz, sx = individual.shape
     tx, ty, tz = individual.torch_position
 
+    if np.random.rand() < 0.3:
+        noise = np.random.normal(0, 0.1, NUM_BLOCK_TYPES)
+        individual.block_weights += noise
+        individual.block_weights = np.maximum(individual.block_weights, 0.01)
+        individual.block_weights /= individual.block_weights.sum()
+
     for y in range(sy):
         for z in range(sz):
             for x in range(sx):
@@ -247,16 +263,16 @@ def dummy_mutate(individual, indpb):
                     continue
 
                 if np.random.rand() < indpb:
-                    not_redstone = False
-                    if y > 0:
-                        block_below = individual[y - 1, z, x]
-                        if block_below not in SOLID_BLOCKS:
-                            not_redstone = True
+                    new_block = np.random.choice(POSSIBLE_BLOCKS, p=individual.block_weights)
+                    individual[y, z, x] = new_block
 
-                    if not_redstone:
-                        individual[y, z, x] = np.random.choice(SOLID_BLOCKS + [blocks.AIR])
-                    else:
-                        individual[y, z, x] = np.random.choice(POSSIBLE_BLOCKS)
+                    if new_block == blocks.REDSTONE_DUST:
+                        block_below_is_solid = False
+                        if y > 0 and individual[y - 1, z, x] in SOLID_BLOCKS:
+                            block_below_is_solid = True
+
+                        if not block_below_is_solid:
+                            individual[y, z, x] = blocks.AIR
 
                     if y < sy - 1:
                         block_above = individual[y + 1, z, x]
@@ -267,48 +283,14 @@ def dummy_mutate(individual, indpb):
                             individual[y + 1, z, x] = blocks.AIR
 
     if np.random.rand() < 0.1:
+        otx, oty, otz = individual.torch_position
+        individual[oty, otz, otx] = np.random.choice(POSSIBLE_BLOCKS, p=individual.block_weights)
+
         individual.torch_position = random_torch_position()
         ntx, nty, ntz = individual.torch_position
         individual[nty, ntz, ntx] = blocks.AIR
 
     return (individual,)
-
-
-# def dummy_mutate(individual, indpb, sigma=2.5):
-#     sy, sz, sx = individual.shape
-#     tx, ty, tz = individual.torch_position
-#     ty_local = ty + 60
-
-#     for y in range(sy):
-#         for z in range(sz):
-#             for x in range(sx):
-#                 distance = (x - tx) ** 2 + (y - ty_local) ** 2 + (z - tz) ** 2
-#                 local_probability = indpb * np.exp(-distance / (2 * sigma**2))
-
-#                 if np.random.rand() < local_probability:
-#                     not_redstone = False
-#                     if y > 0:
-#                         block_below = individual[y - 1, z, x]
-#                         if block_below not in SOLID_BLOCKS:
-#                             not_redstone = True
-
-#                     if not_redstone:
-#                         individual[y, z, x] = np.random.choice(SOLID_BLOCKS + [blocks.AIR])
-#                     else:
-#                         individual[y, z, x] = np.random.choice(POSSIBLE_BLOCKS)
-
-#                     if y < sy - 1:
-#                         block_above = individual[y + 1, z, x]
-#                         if (
-#                             block_above == blocks.REDSTONE_DUST
-#                             and individual[y, z, x] not in SOLID_BLOCKS
-#                         ):
-#                             individual[y + 1, z, x] = blocks.AIR
-
-#     if np.random.rand() < 0.1:
-#         individual.torch_position = random_torch_position()
-
-#     return (individual,)
 
 
 toolbox.register("mutate", dummy_mutate, indpb=0.2)
@@ -498,23 +480,28 @@ def run(server_context: MinecraftServerContext, build_best_at_end: bool = True):
 
     hof = tools.HallOfFame(1, similar=np.array_equal)
 
-    stats = tools.Statistics(lambda ind: ind.fitness.values)
-    stats.register("avg", np.mean)
-    stats.register("std", np.std)
-    stats.register("max", np.max)
+    stats_fitness = tools.Statistics(lambda ind: ind.fitness.values)
+    stats_fitness.register("avg", np.mean)
+    stats_fitness.register("std", np.std)
+    stats_fitness.register("max", np.max)
 
     stats_blocks = tools.Statistics(key=lambda ind: getattr(ind, "blocks_count", None))
     stats_blocks.register("avg", np.mean)
     stats_blocks.register("std", np.std)
     stats_blocks.register("min", np.min)
 
-    mstats = tools.MultiStatistics(fitness=stats, blocks=stats_blocks)
+    stats_weights = tools.Statistics(key=lambda ind: ind.block_weights)
+    stats_weights.register("avg", np.mean, axis=0)
+
+    mstats = tools.MultiStatistics(
+        fitness=stats_fitness, blocks=stats_blocks, weights=stats_weights
+    )
 
     population, logbook = algorithms.eaSimple(
         population,
         toolbox,
         cxpb=0.5,
-        mutpb=0.2,
+        mutpb=0.5,
         ngen=NGEN,
         stats=mstats,
         halloffame=hof,
