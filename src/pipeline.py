@@ -143,6 +143,12 @@ def dummy_evaluate(
 
     sx, sz = BOUNDS[[0, 2]]
 
+    total_slots = individual.size
+    used_blocks = int(np.sum(individual != blocks.AIR))
+    individual.blocks_count = used_blocks
+    # NOTE: [0, 0.05], but 0.05 is only for zero blocks used
+    sparsity_bonus = 0.05 * (1.0 - (used_blocks / total_slots))
+
     perimeter = []
     for lx in range(-1, sx + 1):
         for lz in range(-1, sz + 1):
@@ -197,9 +203,9 @@ def dummy_evaluate(
         max_score = max(max_score, score)
 
         if max_score >= 1.0:
-            return (1.0,)
+            return (1.0 + sparsity_bonus,)
 
-    return (max_score,)
+    return (max_score + sparsity_bonus,)
 
 
 def dummy_mate(ind1, ind2):
@@ -497,13 +503,20 @@ def run(server_context: MinecraftServerContext, build_best_at_end: bool = True):
     stats.register("std", np.std)
     stats.register("max", np.max)
 
+    stats_blocks = tools.Statistics(key=lambda ind: getattr(ind, "blocks_count", None))
+    stats_blocks.register("avg", np.mean)
+    stats_blocks.register("std", np.std)
+    stats_blocks.register("min", np.min)
+
+    mstats = tools.MultiStatistics(fitness=stats, blocks=stats_blocks)
+
     population, logbook = algorithms.eaSimple(
         population,
         toolbox,
         cxpb=0.5,
         mutpb=0.2,
         ngen=NGEN,
-        stats=stats,
+        stats=mstats,
         halloffame=hof,
         verbose=True,
     )
