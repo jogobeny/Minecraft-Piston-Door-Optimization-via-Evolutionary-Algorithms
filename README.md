@@ -14,3 +14,12 @@ python -m src.main --help
 
 ### Plugins
 - https://ci.athion.net/job/FastAsyncWorldEdit/1256/artifact/artifacts/FastAsyncWorldEdit-Paper-2.14.4-SNAPSHOT-1256.jar
+
+---
+
+`DOOR_HEIGHT = 3`
+`NGEN = 300`
+`mu = lambda = population_size = 100`
+`tournsize=3`
+
+<img width="1200" height="1329" alt="image" src="https://github.com/user-attachments/assets/af0ce854-b73f-4618-8918-b65ba0e52538" />
