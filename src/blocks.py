@@ -30,7 +30,7 @@ STICKY_PISTON_W = Block("minecraft:sticky_piston", facing="west")
 
 SOLID_BLOCKS = [
     STONE,
-    SLIME_BLOCK,
+    # SLIME_BLOCK,
     # REDSTONE_BLOCK,
     STICKY_PISTON_D,
     STICKY_PISTON_E,

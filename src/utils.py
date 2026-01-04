@@ -82,6 +82,11 @@ def graph(args):
         fitness_stds = np.array(chapter_fitness.select("std"))
         fitness_maxs = np.array(chapter_fitness.select("max"))
 
+        if fitness_avgs.ndim > 1:
+            fitness_avgs = fitness_avgs[:, 0]
+            fitness_stds = fitness_stds[:, 0]
+            fitness_maxs = fitness_maxs[:, 0]
+
         ax1.plot(generations, fitness_maxs, color=c, ls="-", lw=2, label=f"{label} - max")
         ax1.plot(
             generations, fitness_avgs, color=c, ls="--", lw=1, alpha=0.7, label=f"{label} - avg"

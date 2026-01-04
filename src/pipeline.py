@@ -66,6 +66,9 @@ toolbox = base.Toolbox()
 
 creator.create("FitnessMax", base.Fitness, weights=(1.0,))
 creator.create("Individual", np.ndarray, fitness=creator.FitnessMax)
+# NSGA II
+# creator.create("FitnessMulti", base.Fitness, weights=(1.0, -1.0))
+# creator.create("Individual", np.ndarray, fitness=creator.FitnessMulti)
 
 
 def random_torch_position():
@@ -109,7 +112,8 @@ def init_numpy_individual(icls, content_func):
     individual = genome.view(icls)
     individual.torch_position = torch_position
     individual.block_weights = block_weights
-    individual.fitness = creator.FitnessMax()
+    individual.fitness = creator.FitnessMax()  # NSGA II
+    # individual.fitness = creator.FitnessMulti()
     return individual
 
 
@@ -126,11 +130,10 @@ def dummy_evaluate(
 
     sx, sz = BOUNDS[[0, 2]]
 
-    total_slots = individual.size
     used_blocks = int(np.sum(individual != blocks.AIR))
     individual.blocks_count = used_blocks
     # NOTE: [0, 0.05], but 0.05 is only for zero blocks used
-    sparsity_bonus = 0.05 * (1.0 - (used_blocks / total_slots))
+    sparsity_bonus = 0.05 * (1.0 - (used_blocks / individual.size))
 
     perimeter = []
     for lx in range(-1, sx + 1):
@@ -159,6 +162,7 @@ def dummy_evaluate(
     # NOTE: 0 if redstone torch is destroyed
     if "minecraft:redstone_torch" not in get_block_from_schematic(torch_position, schematic_on):
         return (0.0,)
+        # return (0.0, used_blocks)  # NSGA II
 
     for lx, lz in perimeter:
         block_position = global_position(np.array([lx, -60, lz]), chunk_offset)
@@ -180,9 +184,17 @@ def dummy_evaluate(
 
         if (max_score >= 1) | np.isclose(max_score, 1.0):
             return (1.0 + sparsity_bonus,)
+            # return (1.0, used_blocks)  # NSGA II
+
+    # NSGA II
+    # if (max_score >= 1) | np.isclose(max_score, 1.0):
+    #     return (max_score, used_blocks)
+    # else:
+    #     return (max_score, individual.size)
 
     # NOTE: do not reward sparsity if the door does not work
     return (max_score,)
+    # return (max_score, used_blocks)  # NSGA II
 
 
 def dummy_mate(ind1, ind2):
@@ -269,6 +281,7 @@ def dummy_mutate(individual, indpb):
 
 toolbox.register("mutate", dummy_mutate, indpb=0.2)
 toolbox.register("select", tools.selTournament, tournsize=3)
+# toolbox.register("select", tools.selNSGA2)
 
 
 def build_individual(
@@ -455,15 +468,19 @@ def run(server_context: MinecraftServerContext, build_best_at_end: bool = True):
     toolbox.register("map", preprocess_population, grid_width, server_context, generation_tracker)
 
     hof = tools.HallOfFame(1, similar=np.array_equal)
+    # hof = tools.ParetoFront(similar=np.array_equal)  # NSGA II
 
     stats_fitness = tools.Statistics(lambda ind: ind.fitness.values)
     stats_fitness.register("avg", np.mean)
     stats_fitness.register("std", np.std)
     stats_fitness.register("max", np.max)
+    # NSGA II
+    # stats_fitness.register("avg", np.mean, axis=0)
+    # stats_fitness.register("std", np.std, axis=0)
+    # stats_fitness.register("max", np.max, axis=0)
 
     stats_blocks = tools.Statistics(key=lambda ind: getattr(ind, "blocks_count", None))
     stats_blocks.register("avg", np.mean)
-    stats_blocks.register("std", np.std)
     stats_blocks.register("min", np.min)
 
     stats_weights = tools.Statistics(key=lambda ind: ind.block_weights)
@@ -473,9 +490,11 @@ def run(server_context: MinecraftServerContext, build_best_at_end: bool = True):
         fitness=stats_fitness, blocks=stats_blocks, weights=stats_weights
     )
 
-    population, logbook = algorithms.eaSimple(
+    population, logbook = algorithms.eaMuPlusLambda(
         population,
         toolbox,
+        mu=POPULATION_SIZE,
+        lambda_=POPULATION_SIZE,
         cxpb=0.5,
         mutpb=0.5,
         ngen=NGEN,
@@ -484,12 +503,25 @@ def run(server_context: MinecraftServerContext, build_best_at_end: bool = True):
         verbose=True,
     )
 
+    # population, logbook = algorithms.eaSimple(
+    #     population,
+    #     toolbox,
+    #     cxpb=0.5,
+    #     mutpb=0.5,
+    #     ngen=NGEN,
+    #     stats=mstats,
+    #     halloffame=hof,
+    #     verbose=True,
+    # )
+
     if build_best_at_end:
         server_context.clear_area(
             (0, -60, 0), (grid_width * 16 - 1, -60 + BOUNDS[1] * 2, grid_width * 16 - 1)
         )
 
+        # best_ind = sorted(hof, key=lambda x: (-x.fitness.values[0], x.fitness.values[1]))[0]  # NSGA II
         best_ind = hof[0]
+
         schem = build_individual(best_ind)
         schem.save(
             server_context.schematic_folder.as_posix(),
