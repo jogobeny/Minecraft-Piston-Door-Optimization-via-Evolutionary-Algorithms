@@ -30,6 +30,8 @@ coloredlogs.install(level="INFO", logger=logger)
 #        |
 #        v
 
+DOOR_HEIGHT = 3
+
 # NOTE: this defines the size of the individual within every chunk
 # . . . . . . .
 # . +-------+ .
@@ -38,7 +40,7 @@ coloredlogs.install(level="INFO", logger=logger)
 # . | . . . | .
 # . +-------+ .
 # . . . . . . .
-BOUNDS = np.array([5, 3, 5])
+BOUNDS = np.array([5, DOOR_HEIGHT + 1, 5])
 
 
 # NOTE: this is the relative offset (where the individual will take place) from the top-left block for every chunk
@@ -56,7 +58,7 @@ POSSIBLE_BLOCKS = [blocks.AIR, blocks.REDSTONE_DUST] + SOLID_BLOCKS
 NUM_BLOCK_TYPES = len(POSSIBLE_BLOCKS)
 
 
-def global_position(local_position: np.ndarray, local_offset: np.ndarray):
+def global_position(local_position: np.ndarray, local_offset: np.ndarray = np.array([0, 0, 0])):
     return local_position + GLOBAL_OFFSET + local_offset
 
 
@@ -67,33 +69,11 @@ creator.create("Individual", np.ndarray, fitness=creator.FitnessMax)
 
 
 def random_torch_position():
-    # sx, sz = BOUNDS[[0, 2]]
-
-    # tx_min, tx_max = -1, sx
-    # tz_min, tz_max = -1, sz
-
-    # sidex_length = (tx_max - 1) - (tx_min + 1) + 1
-    # sidez_length = (tz_max - 1) - (tz_min + 1) + 1
-
-    # total_slots = 2 * sidex_length + 2 * sidez_length
-
-    # idx = np.random.randint(0, total_slots)
-
-    # if idx < sidex_length:
-    #     tx, tz = tx_min + 1 + idx, tz_min
-    # elif idx < 2 * sidex_length:
-    #     tx, tz = (tx_min + 1) + (idx - sidex_length), tz_max
-    # elif idx < 2 * sidex_length + sidez_length:
-    #     tx, tz = tx_min, (tz_min + 1) + (idx - 2 * sidex_length)
-    # else:
-    #     tx, tz = tx_max, (tz_min + 1) + (idx - (2 * sidex_length + sidez_length))
-
-    # return np.array([tx, -60, tz])
-
+    """Pick a random position for the redstone torch within the individual bounds."""
     sx, sz = BOUNDS[[0, 2]]
     tx = np.random.randint(0, sx)
     tz = np.random.randint(0, sz)
-    return np.array([tx, 0, tz])
+    return np.array([tx, -60, tz])
 
 
 def create_individual():
@@ -160,7 +140,6 @@ def dummy_evaluate(
             perimeter.append((lx, lz))
 
     torch_position = global_position(individual.torch_position, chunk_offset)
-    torch_position[1] -= 60  # schematic is relative to y=-60
 
     max_score = 0
 
@@ -185,27 +164,21 @@ def dummy_evaluate(
         block_position = global_position(np.array([lx, -60, lz]), chunk_offset)
 
         score = 0
-        block_on = get_block_from_schematic(block_position, schematic_on)
-        block_off = get_block_from_schematic(block_position, schematic_off)
-        if "minecraft:stone" in block_on:
-            score += 0.25
-            if "minecraft:air" in block_off:
-                score += 0.25
-        elif "minecraft:air" not in block_on:
-            score += 0.1
-
-        block_on = get_block_from_schematic(block_position + np.array([0, 1, 0]), schematic_on)
-        block_off = get_block_from_schematic(block_position + np.array([0, 1, 0]), schematic_off)
-        if "minecraft:stone" in block_on:
-            score += 0.25
-            if "minecraft:air" in block_off:
-                score += 0.25
-        elif "minecraft:air" not in block_on:
-            score += 0.1
+        for dy in range(DOOR_HEIGHT):
+            block_on = get_block_from_schematic(block_position + np.array([0, dy, 0]), schematic_on)
+            block_off = get_block_from_schematic(
+                block_position + np.array([0, dy, 0]), schematic_off
+            )
+            if "minecraft:stone" in block_on:
+                score += 1 / (DOOR_HEIGHT * 2)
+                if "minecraft:air" in block_off:
+                    score += 1 / (DOOR_HEIGHT * 2)
+            elif "minecraft:air" not in block_on:
+                score += 0.1
 
         max_score = max(max_score, score)
 
-        if max_score >= 1.0:
+        if (max_score >= 1) | np.isclose(max_score, 1.0):
             return (1.0 + sparsity_bonus,)
 
     # NOTE: do not reward sparsity if the door does not work
@@ -214,7 +187,6 @@ def dummy_evaluate(
 
 def dummy_mate(ind1, ind2):
     axis = np.random.choice([1, 2])  # 1: z-axis, 2: x-axis
-
     point = np.random.randint(1, ind1.shape[axis])
 
     if axis == 1:
@@ -234,7 +206,7 @@ def dummy_mate(ind1, ind2):
             ind1.torch_position.copy(),
         )
 
-    if np.random.rand() < 0.2:  # Self-adaptation
+    if np.random.rand() < 0.2:  # self-adaptation
         ind1.block_weights, ind2.block_weights = (
             ind2.block_weights.copy(),
             ind1.block_weights.copy(),
@@ -259,7 +231,7 @@ def dummy_mutate(individual, indpb):
     for y in range(sy):
         for z in range(sz):
             for x in range(sx):
-                if x == tx and y == ty and z == tz:
+                if x == tx and y == (ty + 60) and z == tz:
                     continue
 
                 if np.random.rand() < indpb:
@@ -284,11 +256,13 @@ def dummy_mutate(individual, indpb):
 
     if np.random.rand() < 0.1:
         otx, oty, otz = individual.torch_position
-        individual[oty, otz, otx] = np.random.choice(POSSIBLE_BLOCKS, p=individual.block_weights)
+        individual[oty + 60, otz, otx] = np.random.choice(
+            POSSIBLE_BLOCKS, p=individual.block_weights
+        )
 
         individual.torch_position = random_torch_position()
         ntx, nty, ntz = individual.torch_position
-        individual[nty, ntz, ntx] = blocks.AIR
+        individual[nty + 60, ntz, ntx] = blocks.AIR
 
     return (individual,)
 
@@ -297,7 +271,9 @@ toolbox.register("mutate", dummy_mutate, indpb=0.2)
 toolbox.register("select", tools.selTournament, tournsize=3)
 
 
-def build_individual(individual, offset: np.ndarray, schem: MCSchematic | None = None):
+def build_individual(
+    individual, offset: np.ndarray = np.array([0, 0, 0]), schem: MCSchematic | None = None
+):
     if schem is None:
         schem = mcschematic.MCSchematic()
 
@@ -389,10 +365,10 @@ def preprocess_population(
     for ind in unique_list:
         grid_x = ind.id % grid_width
         grid_z = ind.id // grid_width
-        offset = np.array([grid_x * 16, -60, grid_z * 16])
 
-        tx, ty, tz = ind.torch_position
-        torch_position = global_position(np.array([tx, ty, tz]), offset)
+        torch_position = global_position(
+            ind.torch_position, np.array([grid_x * 16, 0, grid_z * 16])
+        )
         server_context.set_block(torch_position, Block("minecraft:redstone_torch"))
 
     time.sleep(0.5)
@@ -419,10 +395,10 @@ def preprocess_population(
     for ind in unique_list:
         grid_x = ind.id % grid_width
         grid_z = ind.id // grid_width
-        offset = np.array([grid_x * 16, -60, grid_z * 16])
 
-        tx, ty, tz = ind.torch_position
-        torch_position = global_position(np.array([tx, ty, tz]), offset)
+        torch_position = global_position(
+            ind.torch_position, np.array([grid_x * 16, 0, grid_z * 16])
+        )
         server_context.set_block(torch_position, blocks.AIR)
 
     time.sleep(0.5)
@@ -514,7 +490,7 @@ def run(server_context: MinecraftServerContext, build_best_at_end: bool = True):
         )
 
         best_ind = hof[0]
-        schem = build_individual(best_ind, np.array([0, 0, 0]))
+        schem = build_individual(best_ind)
         schem.save(
             server_context.schematic_folder.as_posix(),
             "best_individual",
@@ -525,7 +501,7 @@ def run(server_context: MinecraftServerContext, build_best_at_end: bool = True):
         time.sleep(0.25)
 
         tx, ty, tz = best_ind.torch_position
-        torch_position = global_position(np.array([tx, ty, tz]), np.array([0, -60, 0]))
+        torch_position = global_position(np.array([tx, ty, tz]))
         server_context.set_block(torch_position, Block("minecraft:redstone_torch"))
 
     return population, logbook, hof
