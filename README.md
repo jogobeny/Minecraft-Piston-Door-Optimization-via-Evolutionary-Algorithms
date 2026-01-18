@@ -23,3 +23,23 @@ python -m src.main --help
 `tournsize=3`
 
 <img width="1200" height="1329" alt="image" src="https://github.com/user-attachments/assets/af0ce854-b73f-4618-8918-b65ba0e52538" />
+
+### Showcase: Generated 3x2 Piston Doors
+
+*NOTE: Only one side is displayed, as the problem was simplified to be symmetrical.*
+
+<img width="872" height="738" alt="image" src="https://github.com/user-attachments/assets/e9349b23-2a8a-4e5c-bb6b-5f0454504a0e" />
+
+### Implementation details
+
+#### Individual Representation
+
+Each chunk represents a single individual in the population. Each individual is defined by:
+- bounds
+- torch position: $(tx, ty, tz) \in \text{BOUNDS}$
+- block distribution: a probability distribution for each block type, used for random sampling during mutation
+
+<img width="800" height="600" alt="chunks" src="https://github.com/user-attachments/assets/682ee52a-4253-401f-8984-77a4c99b2cd2" /><br>
+
+#### Hyperplane crossover
+<img width="800" height="600" alt="crossover" src="https://github.com/user-attachments/assets/f7f110cd-0b22-44fa-b453-598f90cdc37c" />
